@@ -118,21 +118,21 @@ cat("Range of minutes after sunrise:", range(min.eBird, na.rm = TRUE), "\n")
 code <- nimbleCode({
 
   # Priors
-  zeta ~ dunif(0, 1)
+  zeta ~ dunif(0, 1) # Occupancy
   for (k in 1:4) {
-    beta_lambda0[k] ~ dnorm(0, sd=10)
+    beta_lambda0[k] ~ dnorm(0, sd=10) # Bird-location covariates
   } # k
-  sigma ~ dgamma(.01, .01)
+  sigma ~ dgamma(.01, .01) # OR2020 half-normal distance function shape parameter
   theta ~ dunif(0, 1) # Availability within one time interval
 
   for (k in 1:4) {
-    omega_beta[k] ~ dnorm(0, sd=10)
+    omega_beta[k] ~ dnorm(0, sd=10) # Effects of bird-location covariates on eBird availability & observer perceptibility
   } # k
   omega_zeta ~ dunif(0, 1) # eBird Occupancy
   omega_delta ~ dgamma(.01, .01) # eBird Noise
   omega_locat_sd ~ dgamma(0.01, .01) # location SD
 
-  # Process model
+  # ===== Process model ===== #
   for (i in 1:nsite) {
     z[i] ~ dbinom(zeta, 1)
     lambda0[i] <- exp(
@@ -143,63 +143,63 @@ code <- nimbleCode({
     N[i] ~ dpois(lambda0[i] * z[i] + 5e-3 * (1 - z[i]))
   } # i
 
-  # Observation model (likelihood) - Oregon 2020
+  # ===== Observation model (likelihood) - Oregon 2020 ===== #
   for (d in 1:ndist) {
     intval[d] <- sigma^2 * (exp(-1*(breaks[d]^2)/(2*sigma^2)) - exp(-1*(breaks[d+1]^2)/(2*sigma^2)))
-    psi[d] <- 2 * intval[d] / (cutoff ^ 2)
+    psi[d] <- 2 * intval[d] / (cutoff ^ 2) # Perceptibility
   } # d
-  psi_sum <- sum(psi[1:ndist])
+  psi_sum <- sum(psi[1:ndist]) # Sum of perceptibility across all distance bins
   for(d in 1:ndist) {
-    psi_prop[d] <- psi[d] / psi_sum
+    psi_prop[d] <- psi[d] / psi_sum # Proportion of perceptibility for each distance bin
   } # d
 
   for (r in 1:ntime) {
-    phi[r] <- (1 - theta) ^ (r - 1) * theta
+    phi[r] <- (1 - theta) ^ (r - 1) * theta # Availability
   } # r
-  phi_sum <- sum(phi[1:ntime])
+  phi_sum <- sum(phi[1:ntime]) # Sum of availability across all time intervals
   for (r in 1:ntime) {
-    phi_prop[r] <- phi[r] / phi_sum
+    phi_prop[r] <- phi[r] / phi_sum # Proportion of availability for each time interval
   } # r
 
-  # Calculate pi with small constant added
+  # Calculate pi at specific distance bin and time interval (detection probability = perceptibility * availability)
   for (d in 1:ndist) {
     for (r in 1:ntime) {
-      pi_raw[(r-1)*ndist+d] <- psi_prop[d] * phi_prop[r]
+      pi_raw[(r-1)*ndist+d] <- psi_prop[d] * phi_prop[r] # Detection probability
     } # r
   } # d
 
   # Add small constant and normalize
   pi_sum <- sum(pi_raw[1:(ndist*ntime)])
   for(k in 1:(ndist*ntime)) {
-    pi[k] <- (pi_raw[k] + 1e-10) / (pi_sum + (ndist*ntime)*1e-10)
+    pi[k] <- (pi_raw[k] + 1e-10) / (pi_sum + (ndist*ntime)*1e-10) # Normalized detection probability
   }
-
+  # Expected count at specific distance bin and time interval
   for(k in 1:nobs_OR2020) {
     OR2020_cnt_sum[k] ~ dbinom(psi_sum * phi_sum, N[sites_OR2020[k]])
     OR2020_cnt[k,1:(ndist*ntime)] ~ dmultinom(pi[1:(ndist*ntime)], OR2020_cnt_sum[k])
   } # k
 
-  # Observation model (likelihood) - eBird
+  # ===== Observation model (likelihood) - eBird ===== #
   for (k in 1:nlocat_eBird) {
-    omega_locat_epsilon[k] ~ dnorm(0, sd = omega_locat_sd)
+    omega_locat_epsilon[k] ~ dnorm(0, sd = omega_locat_sd) # Random effect for location
   } #k
   for (k in 1:nobs_eBird) {
-    omega_z[k] ~ dbinom(omega_zeta, 1)
+    omega_z[k] ~ dbinom(omega_zeta, 1) # Occupancy
     omega[k] <- exp(
       omega_beta[1] + 
       omega_beta[2] * EVI[sites_eBird[k]] + 
       omega_beta[3] * min.eBird[k] +
       omega_beta[4] * duration_eBird[k] +
-      omega_locat_epsilon[locat_eBird[k]]
+      omega_locat_epsilon[locat_eBird[k]] # Random effect for location
     )
-    eBird_cnt[k] ~ dpois(N[sites_eBird[k]] * omega[k] * omega_z[k] + omega_delta * (1 - omega_z[k]))
+
+    # Expected count from eBird
+    eBird_cnt[k] ~ dpois(N[sites_eBird[k]] * omega[k] * omega_z[k] + omega_delta * (1 - omega_z[k])) 
   } # i
 
 }) # nimbleCode
 
-#============
-# Run Nimble
-#============
+#============  Run Nimble model  =============#
 # Scrub-Jay data
 constants <- list(
   nsite=nsite, 
@@ -256,9 +256,6 @@ inits <- list(
   N = Ni,  
   z = zi
 )
-
-#model <- nimbleModel(code, constants=constants, data=data, inits=inits)
-#mcmcConf <- configureMCMC(model)
 
 mcmc.output <- nimbleMCMC(code = code,
                          data = data,
@@ -318,4 +315,4 @@ summary_df <- get_parameter_summary(as.matrix(mcmc.output$samples))
 print(summary_df)
 
 # 95% CRI for parameters
-write.csv(summary_df, "/Users/shenf/Documents/Bayes_Class/Final_project/Results/parameter_summary.csv", row.names = TRUE)
+write.csv(summary_df, "/Users/shenf/Documents/Bayes_Class/Final_project/Results/parameter_summary.csv", row.names = FASLE)
